@@ -117,7 +117,10 @@ This repository contains notes for the HashiCorp Certified: Terraform Associate 
 - Custom providers can be written if needed (beyond the scope of certification).
 - During initialization (via `terraform init`), Terraform finds and installs providers.
 - Best practice: Providers should be pinned to a specific version to avoid breaking changes.
-
+- When multiple users or automation tools run the same Terraform configuration, they should all use the same versions of their required providers. There are two ways for you to manage provider versions in your configuration.
+- Specify provider version constraints in your configuration's terraform block.
+- Use the dependency lock file
+- If you do not scope provider version appropriately, Terraform will download the latest provider version that fulfills the version constraint. This may lead to unexpected infrastructure changes. 
 ### Terraform Resources
 
 - Resource blocks are fundamental building blocks in Terraform that define the infrastructure components to be managed. They create, update, and delete infrastructure resources like virtual machines, storage accounts, networking components, etc.
@@ -143,6 +146,7 @@ resource "<PROVIDER>_<RESOURCE_TYPE>" "<NAME>" {
   - The data source type (e.g., `aws_ami`, `azurerm_resource_group`).
   - A local name to reference the data.
   - Configuration arguments that specify the data to fetch.
+- Terraform's remote state data source can only load `root-level` output values from the source workspace, it cannot directly access values from resources or modules in the source workspace. To retrieve those values, you must add a corresponding output to the source workspace.
 
 ```hcl
 data "<PROVIDER>_<DATA_SOURCE_TYPE>" "<NAME>" {
@@ -270,6 +274,10 @@ variable "port" {
 - Remote execution provisioners are used in Terraform to run scripts or commands on the remote machine where the infrastructure is being provisioned. These provisioners allow you to perform actions such as installing software, configuring services, or running custom scripts on the remote machine.
 - To use a remote execution provisioner, you specify the connection details for the remote machine, such as the SSH username, private key, and host address. The provisioner will establish an SSH connection to the remote machine and execute the specified commands or scripts.
 - Remote execution provisioners are useful when you need to perform actions that cannot be achieved declaratively in Terraform, such as running configuration management tools like Ansible or executing custom scripts on the remote machine.
+- All provisioners are creation-time provisioners by default which means they will run at the creation of the resource
+- Types:
+  - Inline
+  - Script
 
 Example:
 
@@ -306,6 +314,12 @@ resource "aws_instance" "example" {
 
 - A module is a container for multiple resources used together.
 - Every Terraform configuration has at least one module, known as the root module, consisting of code files in the main working directory.
+### Publishing Terraform Modules
+- Each module has must have one release tag with it, Tags that don't look like version numbers are ignored. Version tags can optionally be prefixed with a `v`.
+- In order to publish modules to the Terraform registry, module names must have the format terraform-<PROVIDER>-<NAME>, where <NAME> can contain extra hyphens.
+```
+Examples: terraform-google-vault or terraform-aws-ec2-instance.
+```
 
 ### Accessing Terraform Modules
 
@@ -455,6 +469,7 @@ Examples of Terraform built-in functions:
 ### Terraform graph
 
 - **Purpose**: Creates a visual representation of Terraform resources and their dependencies.
+  - This command is used to produce files in `dot` format.
 - **CLI Command**: `terraform graph | dot -Tpng > graph.png`
 - **Scenarios**:
   - Visualizing resource dependencies and relationships.
@@ -471,17 +486,36 @@ Example output:
   - Accessing the values of output variables after applying changes.
   - Using output values for further automation or integration with other systems.
 
+#### Redact sensitive outputs
+- You can designate Terraform outputs as sensitive. Terraform will redact the values of sensitive outputs to avoid accidentally printing them out to the console. Use sensitive outputs to share sensitive data from your configuration with other Terraform modules, automation tools, or Terraform Cloud workspaces.
+- Terraform will redact sensitive outputs when planning, applying, or destroying your configuration, or when you query all of your outputs.
+- NOTE: Terraform will not redact sensitive outputs in other cases, `such as when you query a specific output by name, query all of your outputs in JSON format`, or when you use outputs from a child module in your root module.
+
+
 ### Terraform refresh
 
 - **Purpose**: Updates the Terraform state to match the real-world resources without modifying any infrastructure.
 - **CLI Command**: `terraform refresh`
+- The terraform refresh command does not propose any modifications; it would automatically overwrite your state file without giving you the option to review the modifications.
 - **Scenarios**:
   - Refreshing the state file to reflect changes made outside of Terraform.
   - Verifying that the state file is in sync with the actual infrastructure.
 
+### Terraform Plan -refresh-only
+- This allows you to review any updates to your state file. 
+- Unlike the refresh subcommand, -refresh-only mode is supported in workspaces using Terraform Cloud as a remote backend, allowing your team to collaboratively review any modifications.
+
+### Terraform Comments
+- The Terraform language supports three different syntaxes for comments:
+```
+# begins a single-line comment, ending at the end of the line.
+// also begins a single-line comment, as an alternative to #.
+/* and */ are start and end delimiters for a comment that might span over multiple lines
+```
 ### Terraform console
 
 - **Purpose**: Provides an interactive console for evaluating expressions and exploring Terraform functions.
+- Gets a lock on the state file so other state operations cannot be performed during the console.
 - **CLI Command**: `terraform console`
 - **Scenarios**:
   - Testing expressions and interpolations before using them in configurations.
@@ -559,15 +593,96 @@ Example output:
   - Publish and share custom modules.
   - Collaborate with contributors on provider and module development.
   - Directly reference modules in Terraform code.
+- Automatically generated documentation is a benefit of using published modules via the Terraform Registry. It provides detailed information about the module's usage, inputs, outputs, and other relevant documentation, making it easier for users to understand and utilize the module effectively.
+- Published modules via the Terraform Registry allow browsing version histories, enabling users to view and compare different versions of the module. This helps in identifying changes, bug fixes, and improvements made to the module over time, aiding in decision-making and troubleshooting.
 
-### Terraform Cloud Workspaces
+### Terraform Cloud Enterprise
+- These are the paid features of Terraform Enterprise Cloud:
+  - Application Logging
+  - Metrics using prometheus
+  - Air gap network deployment
+- Use terraform enterprise when you are working in air gap facility- no internet or external connectivity and it can download the plugins without requiring the regular internet.
+- Remote execution is a core feature of Terraform Enterprise. When you run Terraform plans or applies, they are executed on the - Terraform Enterprise platform instead of your local machine.
+- Terraform Enterprise provides managed infrastructure for Terraform runs
 
+### Terraform Cloud Plus:
+- Terraform cloud can also be used free of cost
+- These features are for both Cloud Plus and Cloud Enterprise:
+  - Secure variable storage
+  - Servicenow ticket integration
+  - No code provisioning
+- Terraform cloud provides a UI based interface that allows user to manage the state file, resources and even configs also.  
+
+### Terraform Cloud Workspaces/HCP Workspaces
 - **Definition**: Workspaces hosted in Terraform Cloud.
 - **Features**:
   - Stores old versions of state files by default.
   - Maintains a record of all execution activities.
   - All Terraform commands are executed on managed Terraform Cloud VMs.
+  - They are required and not optional
+  - They help in RBAC and you need atleast one workspace when you use terraform cloud.
+  - They are called workspaces but they hold the entire infrastructure and they are more like the directories itself.
+- When you create a new workspace, HCP Terraform automatically selects the most recent version of Terraform available. If you migrate an existing project from the CLI to HCP Terraform, HCP Terraform configures the workspace to use the same version as the Terraform binary you used when migrating.  
+- HCP Terraform lets you change the version a workspace uses on the workspace's settings page to control how and when your projects use newer versions of Terraform. 
+- VCS integration is one of the key features of Terraform Enterprise.
+- You can link workspaces to a VCS repository (e.g., GitHub, GitLab, Bitbucket), which allows you to automatically trigger 
+Terraform runs when changes are made to your configuration files.
+- Pull requests in the VCS can trigger Terraform plan runs, and merging changes can trigger apply operations.
+- State is centralized in Terraform Cloud or Terraform Enterprise and is automatically managed and versioned.
+- Collaborative features ensure that multiple team members can safely modify infrastructure without conflicts.
+- You don't need to configure a backend for state because Terraform Enterprise handles it for you.
+![alt text](image.png)
+### Terraform CLI Workspace
+- Isolate state files in same working directory
+- Does not require you to create a new workspace
+- Default one is created by default in terraform which cannot be deleted.
 
+
+### Terraform Supported Backends:
+- All standard backends do not allow locking like local backend.
+#### Backends Removed:
+- etcd
+- etcdv3
+- swift
+- manta
+- `artifactory`
+#### Supported:
+- S3
+- Consul
+- pg
+- Http
+
+### Backend Configuration
+```hcl
+terraform {
+  backend "remote" {
+    organization = "example_corp"
+ 
+    workspaces {
+      name = "my-app-prod"
+    }
+  }
+}
+```
+- One confifguration can have only one backend block
+- A backend block cannot refer to any named values like inputs, data source attributes, locals etc
+- Once changed backend configuration we need to do `terrraform init` again.
+- You can change your backend configuration at any time. You can change both the configuration itself as well as the type of backend.
+- Terraform will automatically detect any changes in your configuration and request a reinitialization. As part of the reinitialization process, Terraform will ask if you'd like to migrate your existing state to the new configuration
+- If you're using multiple workspaces, Terraform can copy all workspaces to the destination. If Terraform detects that you have multiple workspaces, it will ask if this is what you want to do.
+Adding the workspaces block allows Terraform to dynamically manage multiple workspaces under the same backend configuration. For example: 
+```hcl
+terraform { 
+  backend "remote" { 
+    organization = "my-organization" 
+    workspaces { 
+      prefix = "my-project-" 
+    } 
+  } 
+} 
+```
+- The prefix determines the naming convention for the workspaces (e.g., my-project-dev, my-project-prod). 
+- Terraform uses these dynamically scoped workspaces to store separate state files for different environments or deployments. 
 ![Terraform Cloud Folder](./assets/tf-cloud.png)
 
 ### Terraform OSS Workspaces
